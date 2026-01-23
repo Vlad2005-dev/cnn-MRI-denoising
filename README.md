@@ -45,11 +45,13 @@ cnn-denoising/
 ## Dataset
 
 The dataset is constructed from real EPI BOLD MRI data stored in 4D NIfTI format 
-(X, Y, Z, time).
+(X, Y, Z, time). time = 300.
+
+The file used to extract the images is a NIfTI file that was converted from DICOM. It is a sequence of 300 time slices. The images used are EPI BOLD MR images of a head phantom that performs motion at ~ 146-153 time slices. It is the same o
 
 **Steps:**
 1. Load a 4D EPI BOLD MRI volume
-2. Extract the first 100 timepoints (before motion occurs)
+2. Extract the first 100 timepoints (before motion occurs at around 146th slice)
 3. Select central axial slices from each timepoint
 4. Apply robust global intensity normalization using percentiles
 5. Add synthetic Gaussian noise to simulate scanner thermal noise
@@ -115,3 +117,12 @@ You can choose a different model to run by editing the endpath on line 51 of use
 
     •   This project was developed as a learning exercise, combining independent experimentation with modern AI-assisted tools to explore CNN architectures and training behaviour.
     •	Future extensions could include different noise models, deeper architectures, or quantitative image quality metrics (PSNR, SSIM).
+
+## References
+
+EPI BOLD MR dataset used was obtained from this link: https://zenodo.org/records/7862046
+Translation_08mm.tar.gz is the folder that was downloaded and used in this project. The folder has various PET/MR data, but only EPI BOLD MR data was used here for training. The images used for training and evaluation are all static images (only first 100 time slices are used and motion happens at ~150th slice or 300s).
+
+Einspänner, E. et al.
+Evaluating different methods of MR-based motion correction in simultaneous PET/MR using a head phantom moved by a robotic system.
+EJNMMI Physics, 2022.
