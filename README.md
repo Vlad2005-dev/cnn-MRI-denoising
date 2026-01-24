@@ -124,7 +124,10 @@ You can choose a different model to run by editing the endpath on line 51 of use
 ## References
 
 EPI BOLD MR dataset used was obtained from this link: https://zenodo.org/records/7862046
-Translation_08mm.tar.gz is the folder that was downloaded and used in this project. The folder has various PET/MR data, but only EPI BOLD MR data was used here for training. The images used for training and evaluation are all static images (only first 100 time slices are used and motion happens at ~150th slice or 300s).
+Translation_08mm.tar.gz is the folder that was downloaded and used in this project. 
+The folder has various PET/MR data, but only EPI BOLD MR data was used here for training. 
+The images used for training and evaluation are all static images 
+(only first 100 time slices are used and motion happens at ~150th slice or 300s).
 
 Einspänner, E. et al.
 Evaluating different methods of MR-based motion correction in simultaneous PET/MR using a head phantom moved by a robotic system.
