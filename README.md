@@ -45,9 +45,12 @@ cnn-denoising/
 ## Dataset
 
 The dataset is constructed from real EPI BOLD MRI data stored in 4D NIfTI format 
-(X, Y, Z, time). time = 300.
+(X, Y, Z, time).
 
-The file used to extract the images is a NIfTI file that was converted from DICOM. It is a sequence of 300 time slices. The images used are EPI BOLD MR images of a head phantom that performs motion at ~ 146-153 time slices. It is the same o
+The file used to extract the images is a NIfTI file that was converted from DICOM.
+It is a sequence of 300 time slices. 
+The images used are EPI BOLD MR images of a head phantom that performs motion at ~ 146-153 time slices. 
+See references section in README for source of the data.
 
 **Steps:**
 1. Load a 4D EPI BOLD MRI volume
