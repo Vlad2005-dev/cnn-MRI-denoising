@@ -21,25 +21,27 @@ Check filenames of .png for info on epoch and image count used for the model.
 
 ---
 
-## Folder structure 
+## Folder structure
 
+```text
 cnn-denoising/
 ├── data/
-│   ├── EPI_Head_ep2d_bold_moco_10.nii.gz
-│   └── mri_denoising.npz
+│   ├── EPI_Head_ep2d_bold_moco_10.nii.gz   # raw head EPI MRI volume
+│   └── mri_denoising.npz                   # generated denoising dataset
 ├── scripts/
-│   ├── make_dataset.py
-│   ├── train_autoencoder.py
-│   └── use_trained_autoencoder.py
+│   ├── make_dataset.py                     # builds the dataset from the NIfTI file
+│   ├── train_autoencoder.py                # trains the CNN autoencoder
+│   └── use_trained_autoencoder.py          # runs a trained model on images
 ├── trained_models/
 │   ├── autoencoder_10epochs_1000images.pt
 │   ├── autoencoder_100epochs_1000images.pt
 │   └── autoencoder_1000epochs_1000images.pt
 ├── plots/
-│   └── MSE_vs_Epochs_*.png
+│   └── MSE_vs_Epochs_*.png                 # training loss curves
 ├── denoising_examples/
-│   └── denoising_demo_*.png
+│   └── denoising_demo_*.png                # noisy vs. denoised examples
 └── README.md
+```
 
 
 ## Dataset
