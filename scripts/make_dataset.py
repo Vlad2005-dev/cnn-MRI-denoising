@@ -1,40 +1,56 @@
+"""Build the paired clean/noisy dataset with a leakage-free train/val/test split.
+
+Why the split is by slice position (z) and not random:
+The phantom is static for the first ~146 timepoints, and the signal varies by
+only ~0.5% between timepoints. So slice z at time t is practically the same
+image as slice z at any other time t'. In v1, the 1000 images were really
+10 distinct slices x 100 noise realisations, and a random 80/20 split put
+copies of every validation slice into the training set.
+
+Here every z position belongs to exactly one split. Neighbouring slices are
+still ~97% correlated, so the val and test blocks are surrounded by a
+one-slice buffer that is not used at all.
+"""
+import nibabel as nib
 import numpy as np
-import nibabel as nib       #lib to read NIfTI file format
 
-nii = nib.load("data/EPI_Head_ep2d_bold_moco_10.nii.gz")
-V = nii.get_fdata().astype(np.float32)    #extracts 4D data (X, Y, Z, time)
-                                            # get_fdata() pulls out pixel values as numpy array
-                                            # astype(np.float32) converts them to 32 bit floating point numbers which is standard for neural networks
-                                            # shape of V is (64, 64, 30, 300), so 300 time slices
+from common import DATA_NII, DATA_NPZ
 
-# Take first 100 time slices
-V = V[..., :100]  # shape is now (64, 64, 30, 100)    
+N_TIME = 100          # don't go above ~146, the phantom starts moving there
+NOISE_STD = 0.06
 
-####################################################################################################################################################
-### You can change the number above on line 11 to change the number of time slices taken, BUT DONT GO ABOVE 146 as that's where movement happens ###
-####################################################################################################################################################
+# Slices 3..24 contain the phantom (z>=25 is essentially empty, z<3 is a thin edge).
+VAL_Z = [10, 11]
+TEST_Z = [17, 18]
+BUFFER_Z = [9, 12, 16, 19]                          # unused, separate val/test from train
+TRAIN_Z = [z for z in range(3, 25) if z not in VAL_Z + TEST_Z + BUFFER_Z]
 
-# Global robust scaling using percentiles (avoids outliers)
-vmin, vmax = np.percentile(V, (1, 99))  # for mri each pixel is just an intensity value
-V = np.clip(V, vmin, vmax)              # clips all pixels so they fall between vmin and vmax
-V = (V - vmin) / (vmax - vmin + 1e-6)   # normalization to keep intensity values between [0,1]
+V = nib.load(DATA_NII).get_fdata().astype(np.float32)   # (64, 64, 30, 300) = (X, Y, Z, time)
+V = V[..., :N_TIME]
 
-slices = []
-# Loop over all 100 time slices
-for t in range(V.shape[3]):
-    # For each time slice, extract the middle Z slices (10-19)
-    for z in range(10, V.shape[2]-10):
-        slices.append(V[:, :, z, t])    # get 2D slice at position (X, Y) for z-level z at time t
+# Robust intensity scaling. Percentiles come from the TRAINING slices only,
+# so nothing about the val/test slices influences preprocessing.
+vmin, vmax = np.percentile(V[:, :, TRAIN_Z, :], (1, 99))
+V = np.clip(V, vmin, vmax)
+V = (V - vmin) / (vmax - vmin + 1e-6)
 
-X_clean = np.stack(slices, axis=0)  # (N,H,W), stacks all 2D slices into a single array
-                                    # X_clean.shape is (1000, 64, 64). 100 time slices × 10 z-slices each = 1000 total 2D images
+clean, split, zs, ts = [], [], [], []
+for name, zlist in (("train", TRAIN_Z), ("val", VAL_Z), ("test", TEST_Z)):
+    for z in zlist:
+        for t in range(N_TIME):
+            clean.append(V[:, :, z, t])
+            split.append(name)
+            zs.append(z)
+            ts.append(t)
 
-noise_std = 0.06   # slightly gentler than 0.1
-rng = np.random.default_rng(0)      # creating random number generator with seed = 0 for reproducibility 
-X_noisy = X_clean + noise_std * rng.standard_normal(X_clean.shape, dtype=np.float32)    
-# adding gaussian noise scaled by noise_std, this is realistic as it mimics thermal noise from scanners 
-# which is also gaussian due to central limit theorem (lots of individual electrons jiggling small random amount)
-X_noisy = np.clip(X_noisy, 0, 1)    # clipping dataset back to 0 and 1, just in case extra noise pushed values outside 0 and 1
+clean = np.stack(clean).astype(np.float32)          # (N, 64, 64)
+rng = np.random.default_rng(0)                      # seeded for reproducibility
+noisy = np.clip(clean + NOISE_STD * rng.standard_normal(clean.shape, dtype=np.float32), 0, 1)
 
-np.savez_compressed("data/mri_denoising.npz", clean=X_clean.astype(np.float32), noisy=X_noisy.astype(np.float32))
-print("Saved:", X_clean.shape)
+np.savez_compressed(DATA_NPZ, clean=clean, noisy=noisy.astype(np.float32),
+                    split=np.array(split), z=np.array(zs), t=np.array(ts))
+
+for name, zlist in (("train", TRAIN_Z), ("val", VAL_Z), ("test", TEST_Z)):
+    print(f"{name:5s}: z = {zlist}  ->  {len(zlist) * N_TIME} images")
+print(f"unused buffer slices: {BUFFER_Z}")
+print(f"saved {DATA_NPZ}")

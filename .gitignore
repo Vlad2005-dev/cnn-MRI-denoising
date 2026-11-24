@@ -1,0 +1,5 @@
+data/mri_denoising_split.npz
+docs/build/
+.vscode/
+__pycache__/
+.DS_Store
