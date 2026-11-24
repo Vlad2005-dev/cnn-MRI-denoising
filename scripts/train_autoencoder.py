@@ -1,136 +1,96 @@
+"""Train the denoiser on the training slices, monitor on the validation slices.
+
+Usage:
+    python scripts/train_autoencoder.py                 # 300 epochs, with skip connection
+    python scripts/train_autoencoder.py --epochs 1000
+    python scripts/train_autoencoder.py --no-skip
+
+The checkpoint with the best validation MSE is saved (not just the last epoch).
+The test set is never touched here; use evaluate.py for final numbers.
+"""
+import argparse
+import json
+
+import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
-import matplotlib.pyplot as plt
 
-class Denoiser(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.enc1 = nn.Conv2d(1, 16, 3, padding=1)
-        self.enc2 = nn.Conv2d(16, 32, 3, padding=1)
-        self.pool = nn.MaxPool2d(2)
+from common import MODELS, PLOTS, Denoiser, get_device, image_metrics, load_split, model_name, predict
 
-        self.dec1 = nn.Conv2d(32, 16, 3, padding=1)
-        self.dec2 = nn.Conv2d(16, 1, 3, padding=1)
+p = argparse.ArgumentParser()
+p.add_argument("--epochs", type=int, default=300)
+p.add_argument("--lr", type=float, default=1e-3)
+p.add_argument("--batch-size", type=int, default=32)
+p.add_argument("--no-skip", action="store_true", help="train the variant without the skip connection")
+p.add_argument("--seed", type=int, default=0)
+args = p.parse_args()
 
-    def forward(self, x):
-        x1 = torch.relu(self.enc1(x))      # low-level features
-        x2 = self.pool(x1)
-        x3 = torch.relu(self.enc2(x2))
-        x4 = torch.nn.functional.interpolate(x3, scale_factor=2, mode="bilinear")
-        x5 = torch.relu(self.dec1(x4))
-        x6 = self.dec2(x5 + x1)             # SKIP CONNECTION
-        return torch.sigmoid(x6)
+torch.manual_seed(args.seed)
+device = get_device()
+skip = not args.no_skip
+name = model_name(args.epochs, skip)
 
-# Load dataset
-D = np.load("data/mri_denoising.npz")       # <class 'numpy.lib.npyio.NpzFile'>
-X_clean = torch.tensor(D["clean"][:, None, :, :], dtype=torch.float32)  # (N,1,H,W), <class 'torch.Tensor'>
-X_noisy = torch.tensor(D["noisy"][:, None, :, :], dtype=torch.float32)  # (N,1,H,W), <class 'torch.Tensor'>
+Xtr, Ytr = load_split("train")
+Xva, Yva = load_split("val")
+print(f"device: {device} | train: {len(Xtr)} images | val: {len(Xva)} images")
 
-# Train/val split, 80/20 train/validate split
-idx = torch.randperm(len(X_clean))
-split = int(0.8 * len(idx))
-train_idx, val_idx = idx[:split], idx[split:]
+train_dl = DataLoader(TensorDataset(Xtr, Ytr), batch_size=args.batch_size, shuffle=True)
 
-print(f"Length of training dataset: {len(train_idx)}")
-print(f"Length of validation dataset: {len(val_idx)}")
-n_images = len(X_clean)
-print(f"The total length is: {n_images}")
-
-train_dl = DataLoader(TensorDataset(X_noisy[train_idx], X_clean[train_idx]),
-                      batch_size=32, shuffle=True)
-val_dl = DataLoader(TensorDataset(X_noisy[val_idx], X_clean[val_idx]),
-                    batch_size=32)
-
-# Autoencoder
-model = Denoiser()
-
-
-#####################################################################
-####################### Start Training ##############################
-#####################################################################
-
-opt = torch.optim.Adam(model.parameters(), lr=1e-3)
+model = Denoiser(skip=skip).to(device)
+opt = torch.optim.Adam(model.parameters(), lr=args.lr)
 loss_fn = nn.MSELoss()
 
-n_epochs = 10
+hist = {"train_mse": [], "val_mse": [], "val_psnr": [], "val_ssim": []}
+best = float("inf")
 
-MSE = np.zeros(n_epochs)
-epochs = np.arange(n_epochs)
-
-for epoch in range(n_epochs):
+for epoch in range(1, args.epochs + 1):
     model.train()
+    running = 0.0
     for xb, yb in train_dl:
+        xb, yb = xb.to(device), yb.to(device)
         opt.zero_grad()
         loss = loss_fn(model(xb), yb)
         loss.backward()
         opt.step()
+        running += loss.item() * len(xb)
 
-    model.eval()
-    val_loss = 0
-    with torch.no_grad():           # disables gradient computation (unnecessary during validation, saves memory)
-        for xb, yb in val_dl:
-            val_loss += loss_fn(model(xb), yb).item()
-    val_loss /= len(val_dl)
+    pred = predict(model, Xva, device)
+    val_mse = loss_fn(pred, Yva).item()
+    psnr, ssim = image_metrics(pred.numpy(), Yva.numpy())
 
-    MSE[epoch] = val_loss
-    print(f"epoch {epoch+1}: val MSE = {val_loss:.4f}")
+    hist["train_mse"].append(running / len(Xtr))
+    hist["val_mse"].append(val_mse)
+    hist["val_psnr"].append(float(psnr.mean()))
+    hist["val_ssim"].append(float(ssim.mean()))
 
-torch.save(model.state_dict(), f"trained_models/autoencoder_{n_epochs}epochs_{n_images}images.pt")       # saving the model weights for future use
+    if val_mse < best:
+        best = val_mse
+        torch.save(model.state_dict(), MODELS / f"{name}.pt")
 
-#####################################################################
-####################### End of Training #############################
-#####################################################################
+    print(f"epoch {epoch:4d} | train MSE {hist['train_mse'][-1]:.5f} | val MSE {val_mse:.5f} "
+          f"| val PSNR {psnr.mean():.2f} dB | val SSIM {ssim.mean():.4f}")
 
+best_epoch = int(np.argmin(hist["val_mse"])) + 1
+print(f"best val MSE {best:.5f} at epoch {best_epoch} -> saved {MODELS / (name + '.pt')}")
+with open(MODELS / f"{name}_history.json", "w") as f:
+    json.dump({"args": vars(args), "best_epoch": best_epoch, **hist}, f)
 
-
-model.eval()                        # switch model to evaluation mode
-with torch.no_grad():               # disables gradient computation
-    recon = model(X_noisy[val_idx[:5]]).squeeze().numpy()        # get denoised images, .squeeze() removes extra dimension, .numpy() converts to numpy array
-
-
-
-####################### Plotting noisy + denoised + clean images #############################
-fig, axes = plt.subplots(5, 3, figsize=(6,6))
-for i in range(5):
-    axes[i,0].imshow(X_noisy[val_idx[i], 0], cmap="gray")
-    axes[i,0].set_title("Noisy")
-    axes[i,1].imshow(recon[i], cmap="gray")
-    axes[i,1].set_title("Denoised")
-    axes[i,2].imshow(X_clean[val_idx[i], 0], cmap="gray")
-    axes[i,2].set_title("Clean")
-    for j in range(3):
-        axes[i,j].axis("off")
-
+# ---------------- training curves ----------------
+ep = np.arange(1, args.epochs + 1)            # start at 1 so the log axis works
+fig, ax = plt.subplots(1, 3, figsize=(14, 4))
+ax[0].loglog(ep, hist["train_mse"], label="train")
+ax[0].loglog(ep, hist["val_mse"], label="validation")
+ax[0].set(xlabel="Epoch", ylabel="MSE", title="MSE (log-log)")
+ax[0].legend()
+ax[1].plot(ep, hist["val_psnr"])
+ax[1].set(xlabel="Epoch", ylabel="PSNR (dB)", title="Validation PSNR")
+ax[2].plot(ep, hist["val_ssim"])
+ax[2].set(xlabel="Epoch", ylabel="SSIM", title="Validation SSIM")
+for a in ax:
+    a.axvline(best_epoch, color="grey", ls="--", lw=0.8)
+fig.suptitle(f"{name}  (best epoch {best_epoch}, dashed)")
 plt.tight_layout()
-plt.savefig(f"denoising_examples/5x3/denoising_demo_{n_epochs}epochs_{n_images}images.png", dpi=200)
-plt.show()
-#####################################################################
-
-
-
-
-####################### Plotting MSE vs Epochs #######################
-fig, axes = plt.subplots(1, 2, figsize=(10, 4))
-
-fig.suptitle(
-    f"Validation MSE vs Epochs ({n_epochs} epochs, {n_images} images)",
-    fontsize=14
-)
-
-# Left plot: linear scale
-axes[0].plot(epochs, MSE)
-axes[0].set_xlabel("Epoch")
-axes[0].set_ylabel("Validation MSE")
-
-# Right plot: log-log scale
-axes[1].loglog(epochs, MSE)
-axes[1].set_xlabel("Epoch")
-axes[1].set_ylabel("Validation MSE")
-axes[1].set_title("log-log")
-
-plt.tight_layout()
-plt.savefig(f"plots/MSE_vs_Epochs_{n_epochs}epochs_{n_images}images.png", dpi=200)
-plt.show()
-#####################################################################
+plt.savefig(PLOTS / f"training_curves_{name}.png", dpi=200)
+print(f"saved {PLOTS / f'training_curves_{name}.png'}")
